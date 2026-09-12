@@ -1,0 +1,21 @@
+BCB_Cotizaciones_API/
+├── BCB.Cotizaciones.Api/
+│   ├── Models/
+│   │   ├── BcbOptions.cs
+│   │   └── CotizacionResponse.cs
+│   ├── Services/
+│   │   ├── CotizacionService.cs
+│   ├── Properties/
+│   │   └── launchSettings.json
+│   ├── wwwroot/
+│   │   └── index.html
+│   ├── appsettings.json
+│   ├── BCB.Cotizaciones.Api.csproj
+│   ├── BCB.Cotizaciones.Api.http
+│   └── Program.cs
+├── BCB.Cotizaciones.Api.sln
+├── CAMBIAR_CONFIGURACION.md
+├── README.md
+├── INICIAR.bat
+├── ESTRUCTURA.txt
+└── .gitignore

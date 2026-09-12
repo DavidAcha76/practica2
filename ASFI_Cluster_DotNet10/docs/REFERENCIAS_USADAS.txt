@@ -1,0 +1,9 @@
+Conexiones configuradas según los TXT entregados:
+- BCB: GET http://localhost:5050/api/cotizacion
+- Bancos: http://localhost:5101 ... http://localhost:5114
+- Lectura principal: GET /api/cuentas
+- Información: GET /api/banco/info
+
+Arquitectura de la práctica respetada:
+Bancos -> APIs -> ASFI <- API BCB; ASFI consolida en SQL Server y genera auditoría.
+El barrido se reparte además entre el nodo principal y workers Tailscale.

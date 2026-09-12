@@ -1,0 +1,27 @@
+@host = http://localhost:5050
+
+### Cotización actual
+GET {{host}}/api/cotizacion
+Accept: application/json
+
+### Configuración activa
+GET {{host}}/api/configuracion
+Accept: application/json
+
+### Actualizar manualmente la cotización (solo administración)
+# Define esta clave en tu terminal antes de iniciar la API:
+# $env:BCB__ClaveAdministracion = "una-clave-secreta"
+PUT {{host}}/api/admin/cotizacion
+Content-Type: application/json
+X-Api-Key: una-clave-secreta
+
+{
+  "valorBolivianoPorDolar": 7.2500
+}
+
+### Información de la API
+GET {{host}}/api
+Accept: application/json
+
+### El stream SSE se prueba mejor desde el HTML incluido o con curl -N:
+# curl -N http://localhost:5050/api/cotizacion/stream

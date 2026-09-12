@@ -1,0 +1,25 @@
+@host = http://localhost:5113
+
+GET {{host}}/api/banco/info
+Accept: application/json
+
+###
+POST {{host}}/api/cuentas/seed-demo
+Content-Type: application/json
+
+###
+GET {{host}}/api/cuentas
+Accept: application/json
+
+###
+POST {{host}}/api/cuentas
+Content-Type: application/json
+
+{
+  "cuentaId": "13-TEST-001",
+  "identificacion": "123456789",
+  "nombres": "Persona",
+  "apellidos": "Prueba",
+  "nroCuenta": "999999999999999",
+  "saldoUSD": 1500.2500
+}

@@ -1,0 +1,9 @@
+**/bin/
+**/obj/
+**/.vs/
+**/.vscode/
+**/audit/
+*.user
+*.suo
+*.log
+# No subas llaves reales. Mantén solo una plantilla académica en config/asfi-keys.json.

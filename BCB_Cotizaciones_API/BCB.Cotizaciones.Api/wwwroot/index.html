@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Prueba API BCB - USD/BOB</title>
+  <style>
+    :root { font-family: Inter, system-ui, Arial, sans-serif; color-scheme: light; }
+    body { margin: 0; background: #f4f6f8; color: #17202a; }
+    main { max-width: 850px; margin: 48px auto; padding: 0 20px; }
+    .card { background: white; border-radius: 16px; padding: 24px; box-shadow: 0 8px 28px rgba(0,0,0,.08); margin-bottom: 18px; }
+    h1 { margin-top: 0; }
+    .rate { font-size: 3rem; font-weight: 800; margin: 8px 0; }
+    .muted { color: #637381; }
+    .status { display: inline-flex; align-items: center; gap: 8px; font-weight: 700; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #a0aec0; }
+    .dot.ok { background: #16a34a; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 18px; }
+    .field { background: #f8fafc; border: 1px solid #e5e7eb; border-radius: 10px; padding: 12px; }
+    .field b { display: block; margin-bottom: 4px; }
+    button { border: 0; border-radius: 10px; padding: 11px 16px; font-weight: 700; cursor: pointer; background: #111827; color: white; }
+    pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #0f172a; color: #e2e8f0; padding: 16px; border-radius: 10px; min-height: 95px; }
+    code { font-family: Consolas, monospace; }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card">
+      <h1>Prueba de API BCB</h1>
+      <p class="muted">Simulación académica de cotización USD → BOB.</p>
+
+      <div class="status">
+        <span id="dot" class="dot"></span>
+        <span id="estado">Conectando al stream...</span>
+      </div>
+
+      <div id="cotizacion" class="rate">--.----</div>
+      <div class="muted">Bolivianos por 1 USD</div>
+
+      <div class="grid">
+        <div class="field"><b>Vigencia</b><span id="vigencia">--</span> segundos</div>
+        <div class="field"><b>Última actualización</b><span id="actualizacion">--</span></div>
+        <div class="field"><b>Próxima actualización</b><span id="proxima">--</span></div>
+        <div class="field"><b>Versión</b><span id="version">--</span></div>
+      </div>
+
+      <p><button id="consultar">Consultar GET /api/cotizacion</button></p>
+    </section>
+
+    <section class="card">
+      <h2>Último JSON recibido</h2>
+      <pre id="json">Esperando respuesta...</pre>
+    </section>
+  </main>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+
+    function mostrar(data) {
+      $('cotizacion').textContent = Number(data.valorBolivianoPorDolar).toFixed(4);
+      $('vigencia').textContent = 'Manual';
+      $('actualizacion').textContent = new Date(data.fechaActualizacion).toLocaleString();
+      $('proxima').textContent = 'No programada';
+      $('version').textContent = data.version;
+      $('json').textContent = JSON.stringify(data, null, 2);
+    }
+
+    async function consultarAhora() {
+      try {
+        const response = await fetch('/api/cotizacion');
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        mostrar(await response.json());
+      } catch (error) {
+        $('json').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    $('consultar').addEventListener('click', consultarAhora);
+
+    const stream = new EventSource('/api/cotizacion/stream');
+
+    stream.addEventListener('open', () => {
+      $('dot').classList.add('ok');
+      $('estado').textContent = 'Conectado. Recibiendo cotizaciones automáticamente.';
+    });
+
+    stream.addEventListener('cotizacion', (event) => {
+      mostrar(JSON.parse(event.data));
+    });
+
+    stream.addEventListener('error', () => {
+      $('dot').classList.remove('ok');
+      $('estado').textContent = 'Conexión interrumpida. EventSource intentará reconectar.';
+    });
+
+    consultarAhora();
+  </script>
+</body>
+</html>

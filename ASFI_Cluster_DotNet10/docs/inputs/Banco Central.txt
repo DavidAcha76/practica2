@@ -1,0 +1,5 @@
+El endpoint principal de esta API es:
+
+GET http://localhost:5050/api/cotizacion
+
+Devuelve la cotización vigente de USD a BOB.

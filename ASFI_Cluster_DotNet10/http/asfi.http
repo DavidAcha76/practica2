@@ -1,0 +1,23 @@
+@main = http://localhost:5000
+@worker = http://localhost:5201
+
+### Principal
+GET {{main}}/
+
+### Verificar BCB + 14 bancos + workers habilitados
+GET {{main}}/api/asfi/dependencies
+
+### Configuración efectiva
+GET {{main}}/api/asfi/config-summary
+
+### Lanzar corrida
+POST {{main}}/api/asfi/runs
+
+### Reemplaza RUN_ID
+GET {{main}}/api/asfi/runs/RUN_ID
+
+### Resultados
+GET {{main}}/api/asfi/runs/RUN_ID/results?take=100
+
+### Worker
+GET {{worker}}/api/worker/health

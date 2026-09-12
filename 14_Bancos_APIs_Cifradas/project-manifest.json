@@ -1,0 +1,120 @@
+{
+  "framework": "net10.0",
+  "bankCount": 14,
+  "ports": [
+    5101,
+    5102,
+    5103,
+    5104,
+    5105,
+    5106,
+    5107,
+    5108,
+    5109,
+    5110,
+    5111,
+    5112,
+    5113,
+    5114
+  ],
+  "banks": [
+    {
+      "id": 1,
+      "name": "Banco Unión S.A.",
+      "algorithm": "Caesar",
+      "database": "PostgreSQL",
+      "port": 5101
+    },
+    {
+      "id": 2,
+      "name": "Banco Mercantil Santa Cruz S.A.",
+      "algorithm": "Atbash",
+      "database": "MySQL",
+      "port": 5102
+    },
+    {
+      "id": 3,
+      "name": "Banco Nacional de Bolivia S.A. (BNB)",
+      "algorithm": "Vigenere",
+      "database": "SQLServer",
+      "port": 5103
+    },
+    {
+      "id": 4,
+      "name": "Banco de Crédito de Bolivia S.A. (BCP)",
+      "algorithm": "Playfair",
+      "database": "MongoDB",
+      "port": 5104
+    },
+    {
+      "id": 5,
+      "name": "Banco BISA S.A.",
+      "algorithm": "Hill",
+      "database": "Neo4j",
+      "port": 5105
+    },
+    {
+      "id": 6,
+      "name": "Banco Ganadero S.A.",
+      "algorithm": "DES",
+      "database": "PostgreSQL",
+      "port": 5106
+    },
+    {
+      "id": 7,
+      "name": "Banco Económico S.A.",
+      "algorithm": "3DES",
+      "database": "MySQL",
+      "port": 5107
+    },
+    {
+      "id": 8,
+      "name": "Banco Prodem S.A.",
+      "algorithm": "Blowfish",
+      "database": "SQLServer",
+      "port": 5108
+    },
+    {
+      "id": 9,
+      "name": "Banco Solidario S.A.",
+      "algorithm": "Twofish",
+      "database": "MongoDB",
+      "port": 5109
+    },
+    {
+      "id": 10,
+      "name": "Banco Fortaleza S.A.",
+      "algorithm": "AES",
+      "database": "Neo4j",
+      "port": 5110
+    },
+    {
+      "id": 11,
+      "name": "Banco FIE S.A.",
+      "algorithm": "RSA",
+      "database": "PostgreSQL",
+      "port": 5111
+    },
+    {
+      "id": 12,
+      "name": "Banco PYME de la Comunidad S.A.",
+      "algorithm": "ElGamal",
+      "database": "MySQL",
+      "port": 5112
+    },
+    {
+      "id": 13,
+      "name": "Banco de Desarrollo Productivo S.A.M.",
+      "algorithm": "ECC",
+      "database": "SQLServer",
+      "port": 5113
+    },
+    {
+      "id": 14,
+      "name": "Banco de la Nación Argentina",
+      "algorithm": "ChaCha20",
+      "database": "MongoDB",
+      "port": 5114
+    }
+  ]
+}

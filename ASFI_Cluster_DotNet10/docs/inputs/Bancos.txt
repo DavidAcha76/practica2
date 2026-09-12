@@ -1,0 +1,50 @@
+Las 14 APIs exponen los mismos endpoints; cambia únicamente el puerto:
+
+| API | Base URL |
+|---|---|
+| Banco Unión | http://localhost:5101 |
+| Banco Mercantil | http://localhost:5102 |
+| Banco BNB | http://localhost:5103 |
+| Banco BCP | http://localhost:5104 |
+| Banco BISA | http://localhost:5105 |
+| Banco Ganadero | http://localhost:5106 |
+| Banco Económico | http://localhost:5107 |
+| Banco Prodem | http://localhost:5108 |
+| Banco Solidario | http://localhost:5109 |
+| Banco Fortaleza | http://localhost:5110 |
+| Banco FIE | http://localhost:5111 |
+| Banco PYME | http://localhost:5112 |
+| Banco BDP | http://localhost:5113 |
+| Banco Nación Argentina | http://localhost:5114 |
+
+Endpoints por cada API:
+
+http
+GET  /                         # Información general y lista de rutas
+GET  /api/banco/info           # Banco, algoritmo y motor de BD
+GET  /api/cuentas              # Lista de cuentas cifradas
+GET  /api/cuentas/{id}         # Cuenta cifrada por RecordId
+POST /api/cuentas              # Crea y cifra una cuenta
+POST /api/cuentas/seed-demo    # Inserta 3 cuentas cifradas de demostración
+
+
+Ejemplo para Banco Unión:
+
+http
+GET  http://localhost:5101/api/banco/info
+POST http://localhost:5101/api/cuentas/seed-demo
+GET  http://localhost:5101/api/cuentas
+GET  http://localhost:5101/api/cuentas/{recordId}
+
+
+Body para POST /api/cuentas:
+
+json
+{
+  "cuentaId": "1-001",
+  "identificacion": "937132657",
+  "nombres": "Lucia",
+  "apellidos": "Garcia Vargas",
+  "nroCuenta": "9999011601158610",
+  "saldoUSD": 470754.2664
+}
