@@ -40,9 +40,10 @@ BCB (`localhost:5050`), bancos (`localhost:5101..5114`) y ASFI principal (`local
 La inicialización de SQL está habilitada y apunta al contenedor de `BD`. Usa `INICIAR_TODO.bat` desde la raíz para arrancar las bases y todos los servicios. `CARGAR_CSV.bat` importa los datos de forma separada. Consulta [LEEME.md](../LEEME.md).
 
 ```powershell
-# En cada PC de apoyo
-.\scripts\Open-Firewall-Worker.ps1
-.\scripts\Start-Worker.ps1 -NodeName WORKER-I7-12650H   # cambia el nombre en la otra PC
+# En cada PC de apoyo (abre INICIAR_WORKERS.bat 1 o 2)
+.\INICIAR_WORKERS.bat 1
+# En la segunda PC:
+.\INICIAR_WORKERS.bat 2
 
 # En la PC principal (usa aquí las IP Tailscale reales)
 .\scripts\Start-Main.ps1 -Worker1Ip 100.87.131.69 -Worker2Ip 100.76.119.96

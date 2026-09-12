@@ -17,19 +17,19 @@
 
 ## 2. Workers
 
-En PC i7-12650H, PowerShell como administrador:
+En PC i7-12650H, abre `INICIAR_WORKERS.bat 1`. Solicita elevacion solo si falta la regla de firewall:
 
-```powershell
-.\scripts\Open-Firewall-Worker.ps1
-.\scripts\Start-Worker.ps1 -NodeName WORKER-I7-12650H
+```bat
+INICIAR_WORKERS.bat 1
 ```
 
-En PC i7-10750H:
+En PC i7-10750H, abre `INICIAR_WORKERS.bat 2`:
 
-```powershell
-.\scripts\Open-Firewall-Worker.ps1
-.\scripts\Start-Worker.ps1 -NodeName WORKER-I7-10750H
+```bat
+INICIAR_WORKERS.bat 2
 ```
+
+El BAT inicia un worker en la PC actual. Tailscale no permite iniciar automaticamente programas en otra PC, por lo que debe abrirse una vez en cada equipo de apoyo.
 
 Comprueba desde la principal (cambia la IP por Tailscale):
 

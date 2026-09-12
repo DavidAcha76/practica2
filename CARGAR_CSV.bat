@@ -10,6 +10,6 @@ if not defined CSV_ENTRADA (
 )
 set "RESULTADO=%ERRORLEVEL%"
 echo.
-if not "%RESULTADO%"=="0" echo La carga no se completo. Puedes corregir el problema y volver a ejecutar este BAT.
+if not "%RESULTADO%"=="0" echo La carga o conversion ASFI no se completo. Revisa el mensaje anterior antes de reintentar.
 pause
 exit /b %RESULTADO%

@@ -21,12 +21,13 @@ function Assert($Condition, [string]$Message) {
 $fakes = @'
 function Event([string]$Text) { Add-Content (Join-Path $repositoryRoot 'events.txt') $Text }
 function Ensure-Docker { Event 'docker-ready' }
+function Assert-PortsAvailable { Event 'ports-ready' }
 function Invoke-Compose([string[]]$Arguments) { Event ('compose ' + ($Arguments -join ' ')) }
 function Build-Project([string]$RelativePath, [string]$LogName) {
     Event ('build ' + $RelativePath)
     if ($env:PRACTICA_TEST_FAILURE -eq 'build' -and $RelativePath -like '*BCB*') { throw 'Compilacion simulada fallida' }
 }
-function Invoke-Bootstrap([string]$Command, [string]$InputCsv = '') {
+function Invoke-Bootstrap([string]$Command, [string]$InputCsv = '', [string]$RunId = '') {
     Event ('bootstrap ' + $Command)
     if ($env:PRACTICA_TEST_FAILURE -eq $Command) { throw ('Fallo simulado de ' + $Command) }
     if ($Command -eq 'import') { [IO.File]::WriteAllText((Join-Path $repositoryRoot 'csv-path.txt'), $InputCsv) }
@@ -43,7 +44,22 @@ function Start-Api([string]$RelativeDirectory, [string]$Name, [string]$Url, [str
     Save-State
 }
 function Wait-Api($Service) { Event ('health ' + $Service.Name) }
-function Invoke-RestMethod {
+function Invoke-RestMethod([string]$Uri, [string]$Method = 'Get', [int]$TimeoutSec) {
+    if ($Uri -like '*/api/asfi/runs*') {
+        if ($Method -eq 'Post') {
+            Event 'asfi-start'
+            if ($env:PRACTICA_TEST_FAILURE -eq 'asfi-post') { throw 'ASFI no acepta conversiones' }
+            return [pscustomobject]@{ runId='11111111-1111-1111-1111-111111111111' }
+        }
+        if ($Uri -like '*/runs') {
+            if ($env:PRACTICA_TEST_FAILURE -eq 'asfi-active') { return [pscustomobject]@{ status='Procesando' } }
+            return @()
+        }
+        Event 'asfi-status'
+        $status = if ($env:PRACTICA_TEST_FAILURE -eq 'asfi-failed') { 'Fallido' } elseif ($env:PRACTICA_TEST_FAILURE -eq 'asfi-errors') { 'CompletadoConErrores' } else { 'Completado' }
+        $processed = if ($env:PRACTICA_TEST_FAILURE -eq 'asfi-missing') { 13 } else { 14 }
+        return [pscustomobject]@{ status=$status; processedRecords=$processed; totalRecords=14; successRecords=$processed; failedRecords=0; durationSeconds=2.5; recordsPerSecond=5.6; error='Fallo simulado' }
+    }
     [pscustomobject]@{ type='BCB'; name='BCB'; url='simulado'; ok=$true }
     $count = if ($env:PRACTICA_TEST_FAILURE -eq 'bank-count') { 13 } else { 14 }
     1..$count | ForEach-Object { [pscustomobject]@{ type='Banco'; name="Banco $_"; url='simulado'; ok=($env:PRACTICA_TEST_FAILURE -ne 'http') } }
@@ -53,7 +69,7 @@ function Invoke-RestMethod {
 Assert ($runnerSource.Contains('$lock = $null')) 'Punto de aislamiento encontrado'
 $isolatedRunner = $runnerSource.Replace('$lock = $null', $fakes + "`r`n" + '$lock = $null')
 [IO.File]::WriteAllText((Join-Path $fixtureScripts 'Run-Stack.ps1'), $isolatedRunner)
-foreach ($bat in @('INICIAR_TODO.bat','CARGAR_CSV.bat','VACIAR_BD.bat')) {
+foreach ($bat in @('EJECUTAR_FLUJO.bat','INICIAR_TODO.bat','CARGAR_CSV.bat','PROCESAR_ASFI.bat','VACIAR_BD.bat')) {
     Copy-Item -LiteralPath (Join-Path $root $bat) -Destination $fixture
 }
 foreach ($bank in Get-ChildItem (Join-Path $root '14_Bancos_APIs_Cifradas/src') -Directory -Filter Banco*.Api) {
@@ -99,8 +115,24 @@ Assert ($events -notcontains 'bootstrap import' -and $events -notcontains 'boots
 Run-Bat 'INICIAR_TODO.bat'
 Assert (@($events | Where-Object { $_ -like 'start *' }).Count -eq 0) 'Segundo arranque sin procesos duplicados'
 Assert (($events -contains 'compose up -d --wait --wait-timeout 300') -and ($events -contains 'bootstrap check')) 'Segundo arranque recupera contenedores y revisa bases'
+Run-Bat 'EJECUTAR_FLUJO.bat' '"mi prueba.csv"'
+Assert ($events.IndexOf('bootstrap check') -lt $events.IndexOf('bootstrap import') -and $events -contains 'bootstrap verify-run') 'Un BAT ejecuta inicio, carga, ASFI y verificacion'
+Assert ((Get-Content (Join-Path $fixture 'csv-path.txt') -Raw) -eq (Join-Path $caller 'mi prueba.csv')) 'Flujo completo conserva la ruta CSV externa con espacios'
+Run-Bat 'EJECUTAR_FLUJO.bat' '' 1 'check'
+Assert ($events -notcontains 'bootstrap import') 'Flujo completo detiene la carga si falla el inicio'
 Run-Bat 'CARGAR_CSV.bat'
 Assert ((Get-Content (Join-Path $fixture 'csv-path.txt') -Raw) -eq (Join-Path $fixture 'BD/dataset.csv')) 'CSV predeterminado correcto'
+Assert ($events.IndexOf('bootstrap import') -lt $events.IndexOf('asfi-start')) 'Se inicia ASFI despues de importar'
+Assert ($events.IndexOf('asfi-status') -lt $events.IndexOf('bootstrap verify-run')) 'Se espera ASFI antes de verificar y exportar'
+Assert ($lastOutput -like '*Tiempo ASFI:*' -and $lastOutput -like '*Flujo completado y verificado*') 'Se muestra tiempo ASFI y exito verificado'
+Run-Bat 'PROCESAR_ASFI.bat'
+Assert ($events -contains 'bootstrap verify-run' -and $events -notcontains 'bootstrap import') 'BAT ASFI procesa las cuentas existentes sin reimportar'
+foreach ($failure in @('asfi-post','asfi-failed','asfi-errors','asfi-missing','verify-run','asfi-active','import')) {
+    Run-Bat 'CARGAR_CSV.bat' '' 1 $failure
+    Assert ($lastOutput -notlike '*Flujo completado y verificado*') "Sin falso exito ante $failure"
+    if ($failure -in @('asfi-active','import')) { Assert ($events -notcontains 'asfi-start') 'No se inicia otra corrida tras carga fallida o corrida activa' }
+    if ($failure -eq 'asfi-active') { Assert ($events -notcontains 'bootstrap import') 'No se modifica el origen mientras ASFI procesa' }
+}
 Run-Bat 'CARGAR_CSV.bat' '"mi prueba.csv"'
 Assert ((Get-Content (Join-Path $fixture 'csv-path.txt') -Raw) -eq (Join-Path $caller 'mi prueba.csv')) 'CSV relativo con espacios desde otra carpeta'
 Run-Bat 'VACIAR_BD.bat'

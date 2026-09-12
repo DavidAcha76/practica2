@@ -45,12 +45,13 @@ public sealed class AsfiRepository(IConfiguration configuration, ILogger<AsfiRep
     {
         await using var conn = new SqlConnection(_connectionString); await conn.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
-        cmd.CommandText = @"UPDATE dbo.ConversionRuns SET Status=@status,FinishedAtUtc=@finished,ExchangeRate=@rate,TotalRecords=@total,SuccessRecords=@ok,FailedRecords=@fail,ErrorMessage=@error WHERE RunId=@id";
+        cmd.CommandText = @"UPDATE dbo.ConversionRuns SET Status=@status,FinishedAtUtc=@finished,ExchangeRate=@rate,TotalRecords=@total,SuccessRecords=@ok,FailedRecords=@fail,ErrorMessage=@error,DurationSeconds=@duration WHERE RunId=@id";
         cmd.Parameters.AddWithValue("@id", run.RunId); cmd.Parameters.AddWithValue("@status", run.Status);
         cmd.Parameters.AddWithValue("@finished", (object?)run.FinishedAtUtc ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@rate", (object?)run.ExchangeRate ?? DBNull.Value);
         cmd.Parameters.AddWithValue("@total", run.TotalRecords); cmd.Parameters.AddWithValue("@ok", run.SuccessRecords); cmd.Parameters.AddWithValue("@fail", run.FailedRecords);
         cmd.Parameters.AddWithValue("@error", (object?)run.Error ?? DBNull.Value);
+        cmd.Parameters.AddWithValue("@duration", (object?)run.DurationSeconds ?? DBNull.Value);
         await cmd.ExecuteNonQueryAsync(ct);
     }
 
@@ -95,6 +96,7 @@ public sealed class AsfiRepository(IConfiguration configuration, ILogger<AsfiRep
     {
         await using var conn = new SqlConnection(_connectionString); await conn.OpenAsync(ct);
         await using var cmd = conn.CreateCommand();
+        cmd.CommandTimeout = 300;
         cmd.CommandText = @"
 MERGE dbo.Cuentas AS T
 USING (SELECT * FROM dbo.ConversionResultados WHERE RunId=@run AND Success=1) AS S
@@ -124,6 +126,7 @@ WHEN NOT MATCHED THEN INSERT(CuentaId,BancoId,Identificacion,Nombres,Apellidos,N
     private const string SchemaSql = @"
 IF OBJECT_ID('dbo.Bancos','U') IS NULL CREATE TABLE dbo.Bancos(BancoId int NOT NULL PRIMARY KEY,Nombre nvarchar(150) NOT NULL,AlgoritmoEncriptacion nvarchar(50) NOT NULL);
 IF OBJECT_ID('dbo.ConversionRuns','U') IS NULL CREATE TABLE dbo.ConversionRuns(RunId uniqueidentifier NOT NULL PRIMARY KEY,StartedAtUtc datetime2 NOT NULL,FinishedAtUtc datetime2 NULL,Status nvarchar(40) NOT NULL,ExchangeRate decimal(18,4) NULL,TotalRecords int NOT NULL DEFAULT 0,SuccessRecords int NOT NULL DEFAULT 0,FailedRecords int NOT NULL DEFAULT 0,ErrorMessage nvarchar(max) NULL);
+IF COL_LENGTH('dbo.ConversionRuns','DurationSeconds') IS NULL ALTER TABLE dbo.ConversionRuns ADD DurationSeconds float NULL;
 IF OBJECT_ID('dbo.ConversionResultados','U') IS NULL CREATE TABLE dbo.ConversionResultados(ResultId bigint IDENTITY(1,1) NOT NULL PRIMARY KEY,RunId uniqueidentifier NOT NULL,BatchId int NOT NULL,RecordId nvarchar(150) NOT NULL,CuentaId nvarchar(150) NOT NULL,BancoId int NOT NULL,Identificacion nvarchar(100) NULL,Nombres nvarchar(200) NULL,Apellidos nvarchar(200) NULL,NroCuenta nvarchar(100) NULL,SaldoUSD decimal(18,4) NOT NULL,SaldoBs decimal(18,4) NOT NULL,TipoCambio decimal(18,4) NOT NULL,FechaConversionUtc datetime2 NOT NULL,CodigoVerificacion char(8) NOT NULL,WorkerName nvarchar(100) NOT NULL,IntegrityHash char(64) NOT NULL,Success bit NOT NULL,Error nvarchar(2000) NULL);
 IF NOT EXISTS(SELECT 1 FROM sys.indexes WHERE name='IX_Resultados_Run') CREATE INDEX IX_Resultados_Run ON dbo.ConversionResultados(RunId,BancoId,CuentaId);
 IF OBJECT_ID('dbo.Cuentas','U') IS NULL CREATE TABLE dbo.Cuentas(CuentaId nvarchar(150) NOT NULL,BancoId int NOT NULL,Identificacion nvarchar(100) NULL,Nombres nvarchar(200) NULL,Apellidos nvarchar(200) NULL,NroCuenta nvarchar(100) NULL,SaldoUSD decimal(18,4) NOT NULL,SaldoBs decimal(18,4) NOT NULL,FechaConversion datetime2 NOT NULL,CodigoVerificacion char(8) NOT NULL,TipoCambio decimal(18,4) NOT NULL,RunId uniqueidentifier NOT NULL,CONSTRAINT PK_Cuentas PRIMARY KEY(BancoId,CuentaId));

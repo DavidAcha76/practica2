@@ -51,22 +51,42 @@ public sealed class RunCoordinator(
             var jobs = Channel.CreateBounded<WorkBatchRequest>(new BoundedChannelOptions(Math.Max(4, _workers.Count * 2 + 2)) { FullMode = BoundedChannelFullMode.Wait, SingleWriter = true });
             var results = Channel.CreateBounded<WorkBatchResponse>(new BoundedChannelOptions(Math.Max(4, _workers.Count * 2 + 2)) { FullMode = BoundedChannelFullMode.Wait });
 
-            var writerTask = PersistLoop(run, results.Reader, ct);
-            var consumers = new List<Task>();
-            if (_asfi.ProcessLocally) consumers.Add(LocalConsumer(jobs.Reader, results.Writer, ct));
-            foreach (var worker in _workers.Where(x => x.Enabled)) consumers.Add(RemoteConsumer(worker, jobs.Reader, results.Writer, ct));
-            if (consumers.Count == 0) throw new InvalidOperationException("No hay procesador local ni workers habilitados.");
-
-            var batchId = 0;
-            for (var i = 0; i < all.Count; i += batchSize)
+            using var pipeline = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            async Task Guard(Func<Task> action)
             {
-                var batch = new WorkBatchRequest { RunId = runId, BatchId = ++batchId, ExchangeRate = quote.Rate, Items = all.Skip(i).Take(batchSize).ToList() };
-                await jobs.Writer.WriteAsync(batch, ct);
+                try { await action(); }
+                catch { await pipeline.CancelAsync(); throw; }
             }
-            jobs.Writer.Complete();
-            await Task.WhenAll(consumers);
-            results.Writer.Complete();
-            await writerTask;
+            var writerTask = Guard(() => PersistLoop(run, results.Reader, pipeline.Token));
+            var consumers = new List<Task>();
+            if (_asfi.ProcessLocally) consumers.Add(Guard(() => LocalConsumer(jobs.Reader, results.Writer, pipeline.Token)));
+            foreach (var worker in _workers.Where(x => x.Enabled)) consumers.Add(Guard(() => RemoteConsumer(worker, jobs.Reader, results.Writer, pipeline.Token)));
+            try
+            {
+                if (consumers.Count == 0) throw new InvalidOperationException("No hay procesador local ni workers habilitados.");
+                var batchId = 0;
+                for (var i = 0; i < all.Count; i += batchSize)
+                {
+                    var batch = new WorkBatchRequest { RunId = runId, BatchId = ++batchId, ExchangeRate = quote.Rate, Items = all.GetRange(i, Math.Min(batchSize, all.Count - i)) };
+                    await jobs.Writer.WriteAsync(batch, pipeline.Token);
+                }
+                jobs.Writer.Complete();
+                await Task.WhenAll(consumers);
+                results.Writer.Complete();
+                await writerTask;
+            }
+            catch
+            {
+                await pipeline.CancelAsync();
+                jobs.Writer.TryComplete(); results.Writer.TryComplete();
+                try { await Task.WhenAll(consumers.Append(writerTask)); } catch { }
+                // Conservar el error original de persistencia/procesamiento, no solo la cancelacion.
+                var failure = consumers.Append(writerTask).Select(t => t.Exception?.GetBaseException()).FirstOrDefault(e => e is not null && e is not OperationCanceledException);
+                if (failure is not null) throw new InvalidOperationException("Fallo el procesamiento de lotes ASFI.", failure);
+                throw;
+            }
+
+            if (run.ProcessedRecords != run.TotalRecords) throw new InvalidDataException("ASFI no proceso todos los registros recibidos.");
 
             run.Status = "Consolidando"; await repository.UpdateRunAsync(run, ct);
             await repository.ConsolidateAsync(runId, ct);
@@ -94,14 +114,19 @@ public sealed class RunCoordinator(
 
     private async Task RemoteConsumer(WorkerNodeOptions worker, ChannelReader<WorkBatchRequest> reader, ChannelWriter<WorkBatchResponse> output, CancellationToken ct)
     {
+        var available = true;
         await foreach (var batch in reader.ReadAllAsync(ct))
         {
-            try { await output.WriteAsync(await workerClient.ProcessAsync(worker, batch, ct), ct); }
-            catch (Exception ex)
+            if (available)
             {
-                logger.LogWarning(ex, "Worker {Worker} falló en batch {Batch}; fallback local.", worker.Name, batch.BatchId);
-                await output.WriteAsync(await localProcessor.ProcessBatchAsync(batch, _asfi.LocalMaxParallelism, _asfi.NodeName + "-FALLBACK", ct), ct);
+                try { await output.WriteAsync(await workerClient.ProcessAsync(worker, batch, ct), ct); continue; }
+                catch (Exception ex) when (!ct.IsCancellationRequested)
+                {
+                    available = false;
+                    logger.LogWarning(ex, "Worker {Worker} no disponible; fallback local para el resto de esta corrida.", worker.Name);
+                }
             }
+            await output.WriteAsync(await localProcessor.ProcessBatchAsync(batch, _asfi.LocalMaxParallelism, _asfi.NodeName + "-FALLBACK", ct), ct);
         }
     }
 

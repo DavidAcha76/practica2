@@ -20,7 +20,7 @@ public sealed class BankApiClient(IHttpClientFactory factory, ILogger<BankApiCli
         foreach (var element in EnumerateRecords(doc.RootElement))
         {
             try { items.Add(BankRecordAdapter.Adapt(element, bank.BankId, bank.Name, bank.Algorithm)); }
-            catch (Exception ex) { logger.LogWarning(ex, "Registro no adaptable en {Bank}", bank.Name); }
+            catch (Exception ex) { throw new InvalidDataException($"Registro no adaptable en {bank.Name}; se detiene la conversion para evitar omitir cuentas.", ex); }
         }
         logger.LogInformation("{Bank}: {Count} registros cifrados recibidos.", bank.Name, items.Count);
         return items;

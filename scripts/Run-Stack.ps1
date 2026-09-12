@@ -1,6 +1,7 @@
 param(
-    [ValidateSet('Start','Import','Stop','Status','Reset')][string]$Action = 'Start',
-    [string]$CsvPath = ''
+    [ValidateSet('Start','Import','Process','Stop','Status','Reset')][string]$Action = 'Start',
+    [string]$CsvPath = '',
+    [ValidateRange(1,1440)][int]$TimeoutMinutes = 120
 )
 
 $ErrorActionPreference = 'Stop'
@@ -20,7 +21,7 @@ function Invoke-Native([string]$FilePath, [string[]]$Arguments, [string]$LogPath
         $ErrorActionPreference = 'Continue'
         if ($ErrorLogPath) { & $FilePath @Arguments > $LogPath 2> $ErrorLogPath }
         elseif ($LogPath) { & $FilePath @Arguments *> $LogPath }
-        else { & $FilePath @Arguments 2>&1 | Out-Host }
+        else { & $FilePath @Arguments 2>&1 | ForEach-Object { Write-Host $_.ToString() } }
         return $LASTEXITCODE
     } finally { $ErrorActionPreference = $previousPreference }
 }
@@ -94,10 +95,50 @@ function Build-Project([string]$RelativePath, [string]$LogName) {
     if ((Invoke-Native 'dotnet' @('build',$path,'--nologo','--verbosity','minimal') $log) -ne 0) { Get-Content -LiteralPath $log -Tail 25; throw "No se pudo compilar. Log: $log" }
 }
 
-function Invoke-Bootstrap([string]$Command, [string]$InputCsv = '') {
+function Invoke-Bootstrap([string]$Command, [string]$InputCsv = '', [string]$RunId = '') {
     $arguments = @($bootstrapDll, $Command, $repositoryRoot)
+    if ($RunId) { $arguments += $RunId }
     if ($InputCsv) { $arguments += $InputCsv }
     if ((Invoke-Native 'dotnet' $arguments) -ne 0) { throw "Fallo el paso de bases de datos: $Command." }
+}
+
+function Assert-PortsAvailable {
+    $ports = @(5000,5050) + @(5101..5114)
+    $busy = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object { $_.Port -in $ports } | ForEach-Object { $_.Port } | Select-Object -Unique)
+    if ($busy.Count) { throw "Hay otros procesos usando los puertos $($busy -join ', '). Cierralos antes de iniciar." }
+}
+
+function Assert-AsfiIdle {
+    $runs = Invoke-RestMethod -Uri 'http://localhost:5000/api/asfi/runs' -TimeoutSec 15
+    $active = @($runs | Where-Object { $_.status -notin @('Completado','CompletadoConErrores','Fallido') })
+    if ($active.Count) { throw 'ASFI ya tiene una conversion pendiente. Espera a que termine antes de iniciar otra.' }
+}
+
+function Invoke-AsfiProcessing([string]$InputCsv = '') {
+    $baseUrl = 'http://localhost:5000/api/asfi/runs'
+    Assert-AsfiIdle
+    $run = Invoke-RestMethod -Method Post -Uri $baseUrl -TimeoutSec 30
+    if (-not $run.runId) { throw 'ASFI no devolvio el identificador de la conversion.' }
+    $statusUrl = "$baseUrl/$($run.runId)"
+    $reportDirectory = Join-Path $runtimeDirectory "asfi-$($run.runId)"
+    New-Item -ItemType Directory -Force -Path $reportDirectory | Out-Null
+    $deadline = [datetime]::UtcNow.AddMinutes($TimeoutMinutes)
+    Write-Host "ASFI procesando. RunId: $($run.runId)" -ForegroundColor Cyan
+    do {
+        $status = Invoke-RestMethod -Uri $statusUrl -TimeoutSec 30
+        $status | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $reportDirectory 'estado.json') -Encoding UTF8
+        Write-Host ("ASFI: {0}; {1}/{2} registros; errores: {3}" -f $status.status,$status.processedRecords,$status.totalRecords,$status.failedRecords)
+        if ($status.status -in @('Completado','CompletadoConErrores','Fallido')) { break }
+        if ([datetime]::UtcNow -ge $deadline) { throw "Tiempo de espera agotado. ASFI sigue en $statusUrl; no se cancelo la conversion. Reporte: $reportDirectory" }
+        Start-Sleep -Seconds 5
+    } while ($true)
+    if ($status.status -ne 'Completado' -or $status.failedRecords -ne 0 -or $status.totalRecords -le 0 -or $status.processedRecords -ne $status.totalRecords -or $status.successRecords -ne $status.totalRecords) {
+        throw "Conversion incompleta: $($status.status). $($status.error) Reporte: $reportDirectory"
+    }
+    if ($null -eq $status.durationSeconds) { throw 'ASFI no devolvio el tiempo de procesamiento.' }
+    Write-Host ('Tiempo ASFI: {0:N3} segundos ({1:N2} minutos); {2:N2} registros/segundo.' -f $status.durationSeconds,($status.durationSeconds / 60),$status.recordsPerSecond) -ForegroundColor Green
+    Invoke-Bootstrap 'verify-run' $InputCsv $run.runId
+    Write-Host "Flujo completado y verificado. Saldos en bolivianos y reporte: $reportDirectory" -ForegroundColor Green
 }
 
 function Wait-Api($Service) {
@@ -169,13 +210,19 @@ try {
         exit 0
     }
     if ($Action -eq 'Status') { Show-Status; exit 0 }
+    if ($Action -eq 'Process') {
+        Show-Status
+        Invoke-AsfiProcessing
+        exit 0
+    }
     if ($Action -eq 'Import') {
         if (-not (Test-Path -LiteralPath $bootstrapDll)) { throw 'Ejecuta primero INICIAR_TODO.bat.' }
         if (-not $CsvPath) { $CsvPath = Join-Path $repositoryRoot 'BD/dataset.csv' }
         if (-not (Test-Path -LiteralPath $CsvPath -PathType Leaf)) { throw "No existe el CSV: $CsvPath" }
         Show-Status -SkipDatabases
+        Assert-AsfiIdle
         Invoke-Bootstrap 'import' $CsvPath
-        Write-Host 'Carga completada. La conversion ASFI se inicia por POST http://localhost:5000/api/asfi/runs.' -ForegroundColor Green
+        Invoke-AsfiProcessing $CsvPath
         exit 0
     }
 
@@ -187,9 +234,7 @@ try {
         exit 0
     }
     Stop-OwnedServices
-    $ports = @(5000,5050) + @(5101..5114)
-    $busy = @([System.Net.NetworkInformation.IPGlobalProperties]::GetIPGlobalProperties().GetActiveTcpListeners() | Where-Object { $_.Port -in $ports } | ForEach-Object { $_.Port } | Select-Object -Unique)
-    if ($busy.Count) { throw "Hay otros procesos usando los puertos $($busy -join ', '). Cierralos antes de iniciar." }
+    Assert-PortsAvailable
     Build-Project 'BD/Bootstrap/Bootstrap.csproj' 'build-bootstrap.log'
     Build-Project '14_Bancos_APIs_Cifradas/BancosCifrados.sln' 'build-bancos.log'
     Build-Project 'BCB_Cotizaciones_API/BCB.Cotizaciones.Api.sln' 'build-bcb.log'
