@@ -67,6 +67,8 @@ El archivo incluido contiene **123786 cuentas válidas** para los 14 bancos y **
 
 La carga cifra el JSON completo con la misma implementación de las APIs y escribe lotes en `encrypted_accounts` / `EncryptedAccount`. ASFI lee esas mismas estructuras. Una cuenta se identifica por banco y número de cuenta: repetir o reanudar la carga omite las ya importadas. No reemplaza saldos existentes ni borra datos. Si una carga falla a mitad, puede reanudarse con el mismo BAT.
 
+Los bancos 3, 8 y 13 usan `SqlBulkCopy` para insertar lotes de hasta 2000 cuentas en SQL Server. El resumen de carga muestra además el tiempo individual de cada banco. Los bancos 12 (ElGamal) y 13 (ECC) cifran cada lote en paralelo usando todos los hilos logicos disponibles. Comparten un unico limite global: en una PC de 20 hilos nunca ejecutan mas de 20 cifrados asimetricos a la vez. Tambien reutilizan sus claves publicas, sin volver a construirlas ni leerlas por cada cuenta.
+
 ## Vaciar los 14 bancos y ASFI
 
 Abre **`VACIAR_BD.bat`** para eliminar los datos de los **15 destinos: bancos 1 al 14 y ASFI**. El BAT ejecuta el vaciado directamente: detiene las APIs, compila todos los proyectos, comprueba el acceso a todos los destinos, elimina las cuentas cifradas y los datos de ASFI, verifica que quedaron vacíos y reinicia los servicios. Si falla la compilación, no empieza a borrar. Después puedes abrir `CARGAR_CSV.bat` para cargar desde cero.

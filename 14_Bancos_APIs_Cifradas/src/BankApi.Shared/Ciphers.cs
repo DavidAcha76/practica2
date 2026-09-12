@@ -231,36 +231,49 @@ internal sealed class RsaHybridCipher(string publicKeyPath, string? privateKeyPa
     }
 }
 
-internal sealed class ElGamalHybridCipher(string pHex, string gHex, string yHex, string? xHex) : IAccountCipher
+internal sealed class ElGamalHybridCipher : IAccountCipher
 {
-    private readonly BigInteger _p = new(1, Hex.Decode(pHex)); private readonly BigInteger _g = new(1, Hex.Decode(gHex));
-    private readonly BigInteger _y = new(1, Hex.Decode(yHex)); private readonly BigInteger? _x = string.IsNullOrWhiteSpace(xHex) ? null : new BigInteger(1, Hex.Decode(xHex));
+    private readonly ElGamalPublicKeyParameters _publicKey;
+    private readonly ElGamalPrivateKeyParameters? _privateKey;
+
+    public ElGamalHybridCipher(string pHex, string gHex, string yHex, string? xHex)
+    {
+        var parameters = new ElGamalParameters(new BigInteger(1, Hex.Decode(pHex)), new BigInteger(1, Hex.Decode(gHex)));
+        _publicKey = new ElGamalPublicKeyParameters(new BigInteger(1, Hex.Decode(yHex)), parameters);
+        if (!string.IsNullOrWhiteSpace(xHex)) _privateKey = new ElGamalPrivateKeyParameters(new BigInteger(1, Hex.Decode(xHex)), parameters);
+    }
+
     public CryptoEnvelope Encrypt(string plaintext)
     {
         var dataKey=RandomNumberGenerator.GetBytes(32); var env=new AesGcmCipher(dataKey).Encrypt(plaintext); var engine=new ElGamalEngine();
-        engine.Init(true,new ElGamalPublicKeyParameters(_y,new ElGamalParameters(_p,_g))); var wrapped=engine.ProcessBlock(dataKey,0,dataKey.Length);
+        engine.Init(true,_publicKey); var wrapped=engine.ProcessBlock(dataKey,0,dataKey.Length);
         env.Metadata["wrappedKey"]=Convert.ToBase64String(wrapped); env.Metadata["scheme"]="ElGamal + AES-256-GCM"; return env;
     }
     public string Decrypt(CryptoEnvelope e)
     {
-        if(_x is null) throw new InvalidOperationException("No se configuró clave privada ElGamal."); var engine=new ElGamalEngine();
-        engine.Init(false,new ElGamalPrivateKeyParameters(_x,new ElGamalParameters(_p,_g))); var wrapped=Convert.FromBase64String(e.Metadata["wrappedKey"]); var key=engine.ProcessBlock(wrapped,0,wrapped.Length);
+        if(_privateKey is null) throw new InvalidOperationException("No se configuró clave privada ElGamal."); var engine=new ElGamalEngine();
+        engine.Init(false,_privateKey); var wrapped=Convert.FromBase64String(e.Metadata["wrappedKey"]); var key=engine.ProcessBlock(wrapped,0,wrapped.Length);
         if(key.Length<32){var k=new byte[32]; Buffer.BlockCopy(key,0,k,32-key.Length,key.Length); key=k;} return new AesGcmCipher(key).Decrypt(e);
     }
 }
 
 internal sealed class EccHybridCipher(string publicKeyPath, string? privateKeyPath) : IAccountCipher
 {
+    // La misma clave se usa para todo el lote; leerla desde disco por cada cuenta
+    // convierte el cifrado ECC del banco 13 en un cuello de botella innecesario.
+    private readonly string _publicKeyPem = File.ReadAllText(publicKeyPath);
+    private readonly string? _privateKeyPem = string.IsNullOrWhiteSpace(privateKeyPath) ? null : File.ReadAllText(privateKeyPath);
+
     public CryptoEnvelope Encrypt(string plaintext)
     {
-        using var recipient=ECDiffieHellman.Create(); recipient.ImportFromPem(File.ReadAllText(publicKeyPath));
+        using var recipient=ECDiffieHellman.Create(); recipient.ImportFromPem(_publicKeyPem);
         using var ephemeral=ECDiffieHellman.Create(ECCurve.NamedCurves.nistP256); var key=ephemeral.DeriveKeyFromHash(recipient.PublicKey,HashAlgorithmName.SHA256);
         var env=new AesGcmCipher(key).Encrypt(plaintext); env.Metadata["ephemeralPublicKey"]=Convert.ToBase64String(ephemeral.ExportSubjectPublicKeyInfo()); env.Metadata["scheme"]="ECDH-P256 + SHA256 KDF + AES-256-GCM"; return env;
     }
     public string Decrypt(CryptoEnvelope e)
     {
-        if(string.IsNullOrWhiteSpace(privateKeyPath)) throw new InvalidOperationException("No se configuró clave privada ECC.");
-        using var recipient=ECDiffieHellman.Create(); recipient.ImportFromPem(File.ReadAllText(privateKeyPath)); using var ephemeral=ECDiffieHellman.Create(); ephemeral.ImportSubjectPublicKeyInfo(Convert.FromBase64String(e.Metadata["ephemeralPublicKey"]),out _);
+        if(string.IsNullOrWhiteSpace(_privateKeyPem)) throw new InvalidOperationException("No se configuró clave privada ECC.");
+        using var recipient=ECDiffieHellman.Create(); recipient.ImportFromPem(_privateKeyPem); using var ephemeral=ECDiffieHellman.Create(); ephemeral.ImportSubjectPublicKeyInfo(Convert.FromBase64String(e.Metadata["ephemeralPublicKey"]),out _);
         var key=recipient.DeriveKeyFromHash(ephemeral.PublicKey,HashAlgorithmName.SHA256); return new AesGcmCipher(key).Decrypt(e);
     }
 }

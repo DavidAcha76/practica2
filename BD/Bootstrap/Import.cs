@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Diagnostics;
 using Asfi.Shared;
 using BankApi.Shared;
 
@@ -33,27 +34,51 @@ public sealed partial class Workspace
         await CheckDatabasesAsync();
         var grouped = rows.GroupBy(row => row.BankId).ToDictionary(group => group.Key, group => group.ToList());
         var added = 0;
-        await Parallel.ForEachAsync(BankDirectories, new ParallelOptions { MaxDegreeOfParallelism = 4 }, async (directory, _) =>
+        var cryptoParallelism = Math.Max(1, Environment.ProcessorCount);
+        // El presupuesto compartido evita que ElGamal y ECC sobrepasen los hilos
+        // logicos disponibles cuando ambos bancos cifran al mismo tiempo.
+        using var asymmetricCipherSlots = new SemaphoreSlim(cryptoParallelism, cryptoParallelism);
+        await Parallel.ForEachAsync(BankDirectories, new ParallelOptions { MaxDegreeOfParallelism = 4 }, async (directory, cancellationToken) =>
         {
             var (bank, configuration) = LoadBank(directory);
             if (!grouped.TryGetValue(bank.BancoId, out var accounts)) return;
             var repository = RepositoryFactory.Create(bank);
             try
             {
+                var bankStopwatch = Stopwatch.StartNew();
                 var existing = (await repository.GetAllAsync()).Select(record => record.RecordId).ToHashSet(StringComparer.Ordinal);
                 var pending = accounts.Where(row => !existing.Contains(row.RecordId)).ToList();
                 var cipher = CipherFactory.Create(configuration);
-                foreach (var batch in pending.Chunk(500))
+                // SQL Server recibe una sola operacion SqlBulkCopy por bloque, por eso
+                // puede admitir lotes mayores sin ejecutar un INSERT por cada cuenta.
+                var batchSize = bank.DatabaseEngine.Equals("SQLServer", StringComparison.OrdinalIgnoreCase) ? 2000 : 500;
+                foreach (var batch in pending.Chunk(batchSize))
                 {
-                    var encrypted = batch.Select(row =>
+                    EncryptedAccountRecord Encrypt(CsvAccount row)
                     {
                         var envelope = cipher.Encrypt(JsonSerializer.Serialize(row.Account));
                         return new EncryptedAccountRecord { RecordId = row.RecordId, BancoId = bank.BancoId, Algoritmo = bank.Algorithm, CipherText = envelope.CipherText, Metadata = envelope.Metadata };
-                    }).ToArray();
+                    }
+
+                    EncryptedAccountRecord[] encrypted;
+                    if (bank.Algorithm.Equals("ECC", StringComparison.OrdinalIgnoreCase) || bank.Algorithm.Equals("ELGAMAL", StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Los cifrados asimetricos conservan solo claves inmutables; cada
+                        // cuenta crea su propio motor criptografico, por lo que el lote es seguro en paralelo.
+                        encrypted = new EncryptedAccountRecord[batch.Length];
+                        await Parallel.ForEachAsync(Enumerable.Range(0, batch.Length), new ParallelOptions { MaxDegreeOfParallelism = cryptoParallelism, CancellationToken = cancellationToken }, async (index, token) =>
+                        {
+                            await asymmetricCipherSlots.WaitAsync(token);
+                            try { encrypted[index] = Encrypt(batch[index]); }
+                            finally { asymmetricCipherSlots.Release(); }
+                        });
+                    }
+                    else encrypted = batch.Select(Encrypt).ToArray();
                     await repository.InsertBatchAsync(encrypted);
                     Interlocked.Add(ref added, encrypted.Length);
                 }
-                Console.WriteLine($"Banco {bank.BancoId:00}: {pending.Count} importadas; {accounts.Count - pending.Count} ya existentes.");
+                bankStopwatch.Stop();
+                Console.WriteLine($"Banco {bank.BancoId:00}: {pending.Count} importadas; {accounts.Count - pending.Count} ya existentes; {bankStopwatch.Elapsed.TotalSeconds:N2} s.");
             }
             finally { if (repository is IAsyncDisposable disposable) await disposable.DisposeAsync(); }
         });

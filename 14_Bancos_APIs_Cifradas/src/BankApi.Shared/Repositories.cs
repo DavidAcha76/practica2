@@ -1,4 +1,5 @@
 
+using System.Data;
 using System.Text.Json;
 using Microsoft.Data.SqlClient;
 using MongoDB.Bson;
@@ -31,7 +32,7 @@ internal abstract class RelationalRepositoryBase : IEncryptedAccountRepository
     public async Task<IReadOnlyList<EncryptedAccountRecord>> GetAllAsync(){var list=new List<EncryptedAccountRecord>(); await using var c=await OpenAsync(); await using var cmd=c.CreateCommand(); cmd.CommandText=SelectAllSql; await using var r=await cmd.ExecuteReaderAsync(); while(await r.ReadAsync()) list.Add(Read(r)); return list;}
     public async Task<EncryptedAccountRecord?> GetByIdAsync(string id){await using var c=await OpenAsync(); await using var cmd=c.CreateCommand(); cmd.CommandText=SelectOneSql; Add(cmd,"@id",id); await using var r=await cmd.ExecuteReaderAsync(); return await r.ReadAsync()?Read(r):null;}
     public async Task InsertAsync(EncryptedAccountRecord rec){await using var c=await OpenAsync(); await using var cmd=c.CreateCommand(); cmd.CommandText=InsertSql; Add(cmd,"@id",rec.RecordId);Add(cmd,"@bank",rec.BancoId);Add(cmd,"@alg",rec.Algoritmo);Add(cmd,"@cipher",rec.CipherText);Add(cmd,"@meta",JsonSerializer.Serialize(rec.Metadata));Add(cmd,"@created",rec.CreatedAtUtc); await cmd.ExecuteNonQueryAsync();}
-    public async Task InsertBatchAsync(IReadOnlyList<EncryptedAccountRecord> records)
+    public virtual async Task InsertBatchAsync(IReadOnlyList<EncryptedAccountRecord> records)
     {
         await using var connection = await OpenAsync();
         await using var transaction = await connection.BeginTransactionAsync();
@@ -66,6 +67,27 @@ internal sealed class SqlServerRepository(string cs):RelationalRepositoryBase(cs
 {
     protected override string CreateTableSql => "IF OBJECT_ID('encrypted_accounts','U') IS NULL CREATE TABLE encrypted_accounts(record_id VARCHAR(64) PRIMARY KEY, bank_id INT NOT NULL, algorithm VARCHAR(40) NOT NULL, cipher_text NVARCHAR(MAX) NOT NULL, metadata_json NVARCHAR(MAX) NOT NULL, created_at_utc DATETIME2 NOT NULL);";
     protected override async Task<System.Data.Common.DbConnection> OpenAsync(){var c=new SqlConnection(ConnectionString);await c.OpenAsync();return c;}
+    public override async Task InsertBatchAsync(IReadOnlyList<EncryptedAccountRecord> records)
+    {
+        if (records.Count == 0) return;
+        var table = new DataTable();
+        table.Columns.Add("record_id", typeof(string)); table.Columns.Add("bank_id", typeof(int));
+        table.Columns.Add("algorithm", typeof(string)); table.Columns.Add("cipher_text", typeof(string));
+        table.Columns.Add("metadata_json", typeof(string)); table.Columns.Add("created_at_utc", typeof(DateTime));
+        foreach (var record in records)
+            table.Rows.Add(record.RecordId, record.BancoId, record.Algoritmo, record.CipherText, JsonSerializer.Serialize(record.Metadata), record.CreatedAtUtc);
+
+        await using var connection = new SqlConnection(ConnectionString);
+        await connection.OpenAsync();
+        using var bulk = new SqlBulkCopy(connection, SqlBulkCopyOptions.TableLock, null)
+        {
+            DestinationTableName = "dbo.encrypted_accounts",
+            BatchSize = records.Count,
+            BulkCopyTimeout = 120
+        };
+        foreach (DataColumn column in table.Columns) bulk.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+        await bulk.WriteToServerAsync(table);
+    }
 }
 
 internal sealed class MongoRepository : IEncryptedAccountRepository
